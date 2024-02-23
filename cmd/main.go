@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"time"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -20,7 +22,20 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+
 	resp, err := client.Do(request)
 	if err != nil {
 		http.Error(w, "Error sending request: "+err.Error(), http.StatusInternalServerError)
@@ -41,32 +56,25 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract IP and headers from Via header
-	viaHeader := resp.Header.Get("Via")
-	viaEntries := strings.Split(viaHeader, ", ")
-	ipAndHeaders := make([][]string, len(viaEntries))
-	for i, entry := range viaEntries {
-		ipAndHeaders[i] = strings.SplitN(entry, " ", 2)
-	}
+	// Split headers by new lines
+	requestHeaders := strings.Split(string(requestDump), "\n")
+	responseHeaders := strings.Split(string(responseDump), "\n")
 
-	// Display request and response details along with IP and headers in a table
+	// Display request and response details in the browser
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintln(w, "<html><head><title>Proxy Hops</title></head><body>")
-	fmt.Fprintln(w, "<h2>Proxy Hops:</h2>")
-	fmt.Fprintln(w, "<table border=\"1\"><tr><th>IP</th><th>Headers Added</th></tr>")
-	for _, entry := range ipAndHeaders {
-		fmt.Fprintf(w, "<tr><td>%s</td><td>%s</td></tr>\n", entry[0], entry[1])
+	fmt.Fprintf(w, "<h1>Request</h1>")
+	fmt.Fprintf(w, "<table border=\"1\"><tr><th>IP</th><th>Headers Added</th></tr>")
+	for _, header := range requestHeaders {
+		fmt.Fprintf(w, "<tr><td>%s</td><td></td></tr>", header)
 	}
-	fmt.Fprintln(w, "</table>")
-	fmt.Fprintln(w, "<h2>Request:</h2>")
-	fmt.Fprintln(w, "<pre>")
-	fmt.Fprintln(w, string(requestDump))
-	fmt.Fprintln(w, "</pre>")
-	fmt.Fprintln(w, "<h2>Response:</h2>")
-	fmt.Fprintln(w, "<pre>")
-	fmt.Fprintln(w, string(responseDump))
-	fmt.Fprintln(w, "</pre>")
-	fmt.Fprintln(w, "</body></html>")
+	fmt.Fprintf(w, "</table>")
+
+	fmt.Fprintf(w, "<h1>Response</h1>")
+	fmt.Fprintf(w, "<table border=\"1\"><tr><th>IP</th><th>Headers Added</th></tr>")
+	for _, header := range responseHeaders {
+		fmt.Fprintf(w, "<tr><td></td><td>%s</td></tr>", header)
+	}
+	fmt.Fprintf(w, "</table>")
 }
 
 func main() {
